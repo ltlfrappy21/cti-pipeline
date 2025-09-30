@@ -1,0 +1,10 @@
+# Ignore Python caches
+__pycache__/
+*.pyc
+
+# Ignore backup and patch files
+*.bak.*
+*.patch
+
+# Ignore local environment
+.env
