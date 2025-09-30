@@ -1,0 +1,27 @@
+name: CTI Ingest Daily
+
+on:
+  schedule:
+    - cron: "0 12 * * *"  # 12:00 UTC daily
+  workflow_dispatch:      # allow manual runs
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Run CTI ingest
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          DB_RUNLOG: ${{ secrets.DB_RUNLOG }}
+        run: |
+          HTTP_TIMEOUT=180 MAX_KEV=5 MAX_EPSS=50 VERBOSE=1 python scripts/ingest_cti.py
