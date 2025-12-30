@@ -9,3 +9,6 @@ __pycache__/
 # Ignore local environment
 .env
 scripts/ingest_cti.backup.py
+
+# Ignore logs directory
+logs/
