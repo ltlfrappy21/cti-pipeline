@@ -59,8 +59,11 @@ def create_kev_entry(vuln, date_today):
             "Date Added": {"date": {"start": vuln.get("dateAdded", str(date_today))}},
             "Short Description": {"rich_text": [{"text": {"content": vuln.get("shortDescription", "")[:2000]}}]},
             "Required Action": {"rich_text": [{"text": {"content": vuln.get("requiredAction", "")[:2000]}}]},
-            "Due Date": {"date": {"start": vuln.get("dueDate", "")}},
         }
+        
+        # Add due date only if present
+        if vuln.get("dueDate"):
+            props["Due Date"] = {"date": {"start": vuln["dueDate"]}}
         
         # Add known ransomware campaign usage if available
         if "knownRansomwareCampaignUse" in vuln:
@@ -91,8 +94,11 @@ def update_kev_entry(page_id, vuln, date_today):
         props = {
             "Short Description": {"rich_text": [{"text": {"content": vuln.get("shortDescription", "")[:2000]}}]},
             "Required Action": {"rich_text": [{"text": {"content": vuln.get("requiredAction", "")[:2000]}}]},
-            "Due Date": {"date": {"start": vuln.get("dueDate", "")}},
         }
+        
+        # Add due date only if present
+        if vuln.get("dueDate"):
+            props["Due Date"] = {"date": {"start": vuln["dueDate"]}}
         
         if "knownRansomwareCampaignUse" in vuln:
             props["Known Ransomware"] = {"checkbox": vuln["knownRansomwareCampaignUse"] == "Known"}
@@ -123,7 +129,7 @@ def create_epss_entry(score_data, kev_page_id=None):
             "CVE ID": {"title": [{"text": {"content": cve_id}}]},
             "EPSS Score": {"number": float(score_data.get("epss", 0))},
             "Percentile": {"number": float(score_data.get("percentile", 0))},
-            "Date": {"date": {"start": score_data.get("date", str(dt.date.today()))}},
+            "Date": {"date": {"start": score_data.get("date", dt.date.today().isoformat())}},
         }
         
         # Link to KEV entry if available
@@ -150,7 +156,7 @@ def update_epss_entry(page_id, score_data):
         props = {
             "EPSS Score": {"number": float(score_data.get("epss", 0))},
             "Percentile": {"number": float(score_data.get("percentile", 0))},
-            "Date": {"date": {"start": score_data.get("date", str(dt.date.today()))}},
+            "Date": {"date": {"start": score_data.get("date", dt.date.today().isoformat())}},
         }
         
         notion("PATCH", f"/pages/{page_id}", json={"properties": props})
@@ -286,41 +292,45 @@ def ingest_epss(map_cve):
             batch = cve_list[i:i+batch_size]
             cve_param = ",".join(batch)
             
-            epss_url = f"https://api.first.org/data/v1/epss?cve={cve_param}"
-            response = requests.get(epss_url, timeout=HTTP_TIMEOUT)
-            response.raise_for_status()
-            epss_data = response.json()
-            
-            epss_scores = epss_data.get("data", [])
-            
-            for score_data in epss_scores:
-                cve_id = score_data.get("cve")
-                epss_score = float(score_data.get("epss", 0))
-                percentile = float(score_data.get("percentile", 0))
+            try:
+                epss_url = f"https://api.first.org/data/v1/epss?cve={cve_param}"
+                response = requests.get(epss_url, timeout=HTTP_TIMEOUT)
+                response.raise_for_status()
+                epss_data = response.json()
                 
-                if not cve_id:
-                    continue
+                epss_scores = epss_data.get("data", [])
                 
-                # Check if EPSS entry exists in Notion
-                if DB_EPSS:
-                    existing = notion_query_cve(DB_EPSS, cve_id)
-                    if existing:
-                        # Update existing entry
-                        if update_epss_entry(existing["id"], score_data):
-                            updated += 1
+                for score_data in epss_scores:
+                    cve_id = score_data.get("cve")
+                    
+                    if not cve_id:
+                        continue
+                    
+                    # Check if EPSS entry exists in Notion
+                    if DB_EPSS:
+                        existing = notion_query_cve(DB_EPSS, cve_id)
+                        if existing:
+                            # Update existing entry
+                            if update_epss_entry(existing["id"], score_data):
+                                updated += 1
+                        else:
+                            # Create new entry and link to KEV if available
+                            kev_page_id = map_cve.get(cve_id)
+                            page_id = create_epss_entry(score_data, kev_page_id)
+                            if page_id:
+                                created += 1
+                                if kev_page_id:
+                                    linked += 1
                     else:
-                        # Create new entry and link to KEV if available
-                        kev_page_id = map_cve.get(cve_id)
-                        page_id = create_epss_entry(score_data, kev_page_id)
-                        if page_id:
-                            created += 1
-                            if kev_page_id:
-                                linked += 1
-                else:
-                    # No DB configured, just count
-                    created += 1
-                    if cve_id in map_cve:
-                        linked += 1
+                        # No DB configured, just count
+                        created += 1
+                        if cve_id in map_cve:
+                            linked += 1
+            
+            except Exception as e:
+                print(f"  WARNING: Batch {i//batch_size + 1} failed: {e}")
+                # Continue processing remaining batches
+                continue
         
         print(f"  EPSS: created={created}, updated={updated}, linked_to_KEV={linked}")
         return created, updated, linked
